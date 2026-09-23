@@ -5,15 +5,29 @@ let role = localStorage.getItem("methane_role") || "";
 const loginBox = document.querySelector("#login");
 const appBox = document.querySelector("#app");
 const rows = document.querySelector("#rows");
+const peakRows = document.querySelector("#peaks");
 const live = document.querySelector("#live");
 const form = document.querySelector("#form");
+const viewReadings = document.querySelector("#view-readings");
+const viewPeaks = document.querySelector("#view-peaks");
+const tabReadings = document.querySelector("#tab-readings");
+const tabPeaks = document.querySelector("#tab-peaks");
 
 function paint(list) {
+  const canFix = role === "writer";
   rows.innerHTML = list
     .map(
       (r) =>
-        `<tr><td>${r.site}</td><td>${r.ch4_pct}</td><td class="${r.level === "报警" ? "alarm" : "ok"}">${r.level}</td><td>${r.note}</td></tr>`,
+        `<tr><td>${r.site}</td><td>${r.ch4_pct}</td><td class="${r.level === "报警" ? "alarm" : "ok"}">${r.level}</td><td>${r.note}</td>` +
+        (canFix ? `<td><button class="fix" data-id="${r.id}" data-site="${r.site}" data-ch4="${r.ch4_pct}">改正</button></td>` : "") +
+        `</tr>`,
     )
+    .join("");
+}
+
+function paintPeaks(list) {
+  peakRows.innerHTML = list
+    .map((p) => `<tr><td>${p.site}</td><td>${p.peak_ch4}</td><td>${p.reading_id}</td></tr>`)
     .join("");
 }
 
@@ -31,18 +45,32 @@ async function api(path, options = {}) {
   return data;
 }
 
+async function loadPeaks() {
+  paintPeaks(await api("/api/peaks"));
+}
+
+async function load() {
+  paint(await api("/api/readings"));
+  await loadPeaks();
+}
+
+function showTab(name) {
+  const isPeaks = name === "peaks";
+  viewReadings.hidden = isPeaks;
+  viewPeaks.hidden = !isPeaks;
+  tabReadings.classList.toggle("active", !isPeaks);
+  tabPeaks.classList.toggle("active", isPeaks);
+}
+
 function showApp() {
   loginBox.hidden = true;
   appBox.hidden = false;
   document.querySelector("#who").textContent = role === "writer" ? "检查员" : "查看";
   document.querySelector("#out").hidden = false;
   form.hidden = role !== "writer";
+  showTab("readings");
   connect();
   load();
-}
-
-async function load() {
-  paint(await api("/api/readings"));
 }
 
 function connect() {
@@ -80,9 +108,34 @@ form.onsubmit = async (e) => {
         ch4_pct: Number(document.querySelector("#ch4").value),
       }),
     });
+    document.querySelector("#ch4").value = "";
   } catch (err) {
     live.textContent = err.message;
   }
+};
+
+// 峰值册只由后端按现存记录重算，页面上没有任何手改峰值的入口；
+// 这里只能改正某条班测历史浓度。
+rows.onclick = async (e) => {
+  const btn = e.target.closest(".fix");
+  if (!btn) return;
+  const input = prompt(`改正 ${btn.dataset.site} 这条班测（原浓度 ${btn.dataset.ch4}）的甲烷浓度 %：`);
+  if (input === null || input.trim() === "") return;
+  try {
+    await api(`/api/readings/${btn.dataset.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ ch4_pct: Number(input) }),
+    });
+    await load();
+  } catch (err) {
+    live.textContent = err.message;
+  }
+};
+
+tabReadings.onclick = () => showTab("readings");
+tabPeaks.onclick = () => {
+  showTab("peaks");
+  loadPeaks();
 };
 
 document.querySelector("#out").onclick = () => {
